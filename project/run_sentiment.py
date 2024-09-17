@@ -21,10 +21,7 @@ class Linear(minitorch.Module):
         self.out_size = out_size
 
     def forward(self, x):
-        batch, in_size = x.shape
-        return (
-            x.view(batch, in_size) @ self.weights.value.view(in_size, self.out_size)
-        ).view(batch, self.out_size) + self.bias.value
+        return x @ self.weights.value + self.bias.value
 
 
 class Conv1d(minitorch.Module):
@@ -35,7 +32,8 @@ class Conv1d(minitorch.Module):
 
     def forward(self, input):
         # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+        # expect input shape: Batch, in_channels, width
+        return minitorch.conv1d(input, self.weights.value) + self.bias.value
 
 
 class CNNSentimentKim(minitorch.Module):
@@ -62,14 +60,31 @@ class CNNSentimentKim(minitorch.Module):
         super().__init__()
         self.feature_map_size = feature_map_size
         # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+        self.conv1 = Conv1d(embedding_size, feature_map_size, filter_sizes[0])
+        self.conv2 = Conv1d(feature_map_size, feature_map_size, filter_sizes[1])
+        self.conv3 = Conv1d(feature_map_size, feature_map_size, filter_sizes[2])
+        self.linear = Linear(feature_map_size, 1)
+        self.dropout = dropout
 
     def forward(self, embeddings):
         """
         embeddings tensor: [batch x sentence length x embedding dim]
         """
         # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+        embeddings = embeddings.permute(0, 2, 1)
+        out = self.conv1(embeddings).relu()
+        out = self.conv2(out).relu()
+        out = self.conv3(out).relu()
+        out = minitorch.max(out, dim=-1)
+        B, c, _ = out.shape
+        out = out.view(B, c)
+        out = self.linear(out).relu()
+        if out.requires_grad:
+            ignore = False 
+        else:
+            ignore = True
+        out = minitorch.dropout(out, 0.0, ignore)
+        return out.sigmoid()
 
 
 # Evaluation helper methods
@@ -153,7 +168,7 @@ class SentenceSentimentTrain:
                 x.requires_grad_(True)
                 y.requires_grad_(True)
                 # Forward
-                out = model.forward(x)
+                out = model.forward(x).view(batch_num)
                 prob = (out * y) + (out - 1.0) * (y - 1.0)
                 loss = -(prob.log() / y.shape[0]).sum()
                 loss.view(1).backward()
@@ -205,15 +220,14 @@ def encode_sentences(
     for sentence in dataset["sentence"][:N]:
         # pad with 0s to max sentence length in order to enable batching
         # TODO: move padding to training code
-        sentence_embedding = [[0] * embeddings_lookup.d_emb] * max_sentence_len
+        sentence_embedding = [[0] * embeddings_lookup.d_emb for _ in range(max_sentence_len)]
         for i, w in enumerate(sentence.split()):
-            sentence_embedding[i] = [0] * embeddings_lookup.d_emb
             if w in embeddings_lookup:
-                sentence_embedding[i][:] = embeddings_lookup.emb(w)
+                sentence_embedding[i] = embeddings_lookup.emb(w)
             else:
                 # use random embedding for unks
                 unks.add(w)
-                sentence_embedding[i][:] = unk_embedding
+                sentence_embedding[i] = unk_embedding
         Xs.append(sentence_embedding)
 
     # load labels

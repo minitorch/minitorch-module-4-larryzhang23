@@ -109,6 +109,8 @@ def backpropagate(variable: Variable, deriv: Any) -> None:
     """
     # TODO: Implement for Task 1.4.
     nodes = topological_sort(variable)
+    # print([n.unique_id for n in nodes])
+    # import pdb; pdb.set_trace()
     deriv_map = {variable.unique_id: deriv}
     for node in nodes:
         node_deriv = deriv_map[node.unique_id]

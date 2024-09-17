@@ -45,9 +45,7 @@ class Linear(minitorch.Module):
         self.out_size = out_size
 
     def forward(self, x):
-        B = x.shape[0]
-        x = x.view(B, 1, x.shape[1])
-        return (x @ self.weights.value).view(B, self.out_size) + self.bias.value
+        return x @ self.weights.value + self.bias.value
         
 
 
@@ -121,7 +119,7 @@ if __name__ == "__main__":
     if args.DATASET == "xor":
         data = minitorch.datasets["Xor"](PTS)
     elif args.DATASET == "simple":
-        data = minitorch.datasets["Simple"].simple(PTS)
+        data = minitorch.datasets["Simple"](PTS)
     elif args.DATASET == "split":
         data = minitorch.datasets["Split"](PTS)
 
