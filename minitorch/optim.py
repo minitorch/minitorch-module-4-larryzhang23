@@ -33,4 +33,5 @@ class SGD(Optimizer):
                     p.update(p.value - self.lr * p.value.derivative)
             elif hasattr(p.value, "grad"):
                 if p.value.grad is not None:
+                    # import pdb; pdb.set_trace()
                     p.update(p.value - self.lr * p.value.grad)

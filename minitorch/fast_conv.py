@@ -8,6 +8,7 @@ from .tensor import Tensor
 from .tensor_data import (
     MAX_DIMS,
     Index,
+    Storage,
     Shape,
     Strides,
     broadcast_index,
@@ -25,14 +26,14 @@ broadcast_index = njit(inline="always")(broadcast_index)
 
 
 def _tensor_conv1d(
-    out: Tensor,
+    out: Storage,
     out_shape: Shape,
     out_strides: Strides,
     out_size: int,
-    input: Tensor,
+    input: Storage,
     input_shape: Shape,
     input_strides: Strides,
-    weight: Tensor,
+    weight: Storage,
     weight_shape: Shape,
     weight_strides: Strides,
     reverse: bool,
@@ -77,11 +78,42 @@ def _tensor_conv1d(
         and in_channels == in_channels_
         and out_channels == out_channels_
     )
-    s1 = input_strides
-    s2 = weight_strides
 
     # TODO: Implement for Task 4.1.
-    raise NotImplementedError("Need to implement for Task 4.1")
+    for out_idx in prange(out_size):
+        # create cache
+        out_index = np.zeros_like(out_shape)
+        in_index = np.zeros_like(input_shape)
+        ker_index = np.zeros_like(weight_shape)
+        to_index(out_idx, out_shape, out_index)
+        in_index[0] = out_index[0]
+        ker_index[0] = out_index[1]
+        if reverse:
+            out_index[2] = width - out_index[2] - 1
+        out_pos = index_to_position(out_index, out_strides)
+        t_idx = out_index[2]
+        sums = 0.0
+        for c in range(in_channels):
+            in_index[1] = c
+            ker_index[1] = c
+            for conv_idx in range(kw):
+                ker_index[2] = conv_idx
+                ker_pos = index_to_position(ker_index, weight_strides)
+                ker_val = weight[ker_pos]
+                in_val = 0.0
+                if reverse:
+                    if t_idx - conv_idx >= 0:
+                        in_index[2] = t_idx 
+                        in_pos = index_to_position(in_index, input_strides)
+                        in_val = input[in_pos]
+                   
+                else:
+                    if conv_idx + t_idx < width:
+                        in_index[2] = conv_idx + t_idx 
+                        in_pos = index_to_position(in_index, input_strides)
+                        in_val = input[in_pos]
+                sums += ker_val * in_val 
+        out[out_pos] = sums
 
 
 tensor_conv1d = njit(parallel=True)(_tensor_conv1d)
@@ -207,9 +239,53 @@ def _tensor_conv2d(
     s20, s21, s22, s23 = s2[0], s2[1], s2[2], s2[3]
 
     # TODO: Implement for Task 4.2.
-    raise NotImplementedError("Need to implement for Task 4.2")
+    for out_idx in prange(out_size):
+        # create buffer
+        out_index = np.zeros_like(out_shape)
+        ker_index = np.zeros_like(weight_shape)
+        in_index = np.zeros_like(input_shape)
+        to_index(out_idx, out_shape, out_index)
+        in_index[0] = out_index[0]
+        ker_index[0] = out_index[1]
+        if reverse:
+            out_index[2] = height - out_index[2] - 1
+            out_index[3] = width - out_index[3] - 1
+        h_idx, w_idx = out_index[2:]
 
-
+        sums = 0
+        for c in range(in_channels):
+            in_index[1] = c
+            ker_index[1] = c
+            
+            for kh_idx in range(kh):
+                if reverse:
+                    if h_idx - kh_idx < 0:
+                        continue 
+                    in_index[2] = h_idx - kh_idx
+                else:
+                    if h_idx + kh_idx >= height:
+                        continue 
+                    in_index[2] = h_idx + kh_idx
+                ker_index[2] = kh_idx
+                
+                for kw_idx in range(kw):
+                    if reverse:
+                        if w_idx - kw_idx < 0:
+                            continue 
+                        in_index[3] = w_idx - kw_idx
+                    else:
+                        if w_idx + kw_idx >= width:
+                            continue
+                        in_index[3] = w_idx + kw_idx 
+                    ker_index[3] = kw_idx 
+                    ker_pos = index_to_position(ker_index, s2)
+                    ker_val = weight[ker_pos]
+                    
+                    in_pos = index_to_position(in_index, s1)
+                    in_val = input[in_pos]
+                    sums += ker_val * in_val 
+        
+                   
 tensor_conv2d = njit(parallel=True, fastmath=True)(_tensor_conv2d)
 
 

@@ -1,9 +1,14 @@
-from mnist import MNIST
+import os
+import math
+import numpy as np
+import multiprocessing as mp
+from datasets import load_dataset
 
 import minitorch
 
-mndata = MNIST("project/data/")
-images, labels = mndata.load_training()
+
+mnist = load_dataset("ylecun/mnist")
+
 
 BACKEND = minitorch.TensorBackend(minitorch.FastOps)
 BATCH = 16
@@ -20,29 +25,37 @@ def RParam(*shape):
     return minitorch.Parameter(r)
 
 
+def URParam(low, high, *shape):
+    r = minitorch.rand(shape, backend=BACKEND) * (high - low) + low 
+    return minitorch.Parameter(r)
+
+
 class Linear(minitorch.Module):
     def __init__(self, in_size, out_size):
         super().__init__()
-        self.weights = RParam(in_size, out_size)
-        self.bias = RParam(out_size)
+        initial_weight_lb = -1 / math.sqrt(in_size)
+        initial_weight_ub = 1 / math.sqrt(in_size)
+        self.weights = URParam(initial_weight_lb, initial_weight_ub, in_size, out_size)
+        self.bias = URParam(initial_weight_lb, initial_weight_ub, out_size)
         self.out_size = out_size
 
     def forward(self, x):
         batch, in_size = x.shape
-        return (
-            x.view(batch, in_size) @ self.weights.value.view(in_size, self.out_size)
-        ).view(batch, self.out_size) + self.bias.value
+        return x.view(batch, in_size) @ self.weights.value + self.bias.value
 
 
 class Conv2d(minitorch.Module):
     def __init__(self, in_channels, out_channels, kh, kw):
         super().__init__()
-        self.weights = RParam(out_channels, in_channels, kh, kw)
-        self.bias = RParam(out_channels, 1, 1)
+        initial_weight_lb = -1 / math.sqrt(in_channels * kh * kw)
+        intial_weight_ub = 1 / math.sqrt(in_channels * kh * kw)
+        self.weights = URParam(initial_weight_lb, intial_weight_ub, out_channels, in_channels, kh, kw)
+        self.bias = URParam(initial_weight_lb, intial_weight_ub, 1, out_channels, 1, 1)
 
     def forward(self, input):
         # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+        # import pdb; pdb.set_trace()
+        return minitorch.conv2d(input, self.weights.value) + self.bias.value
 
 
 class Network(minitorch.Module):
@@ -68,23 +81,71 @@ class Network(minitorch.Module):
         self.out = None
 
         # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+        self.conv1 = Conv2d(1, 4, 3, 3)
+        self.conv2 = Conv2d(4, 8, 3, 3)
+        self.linear1 = Linear(392, 64)
+        self.linear2 = Linear(64, 10)
 
     def forward(self, x):
         # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+        B, c, h, w = x.shape
+        x = self.conv1(x).relu()
+        self.mid = x 
+        x = self.conv2(x).relu()
+        self.out = x 
+        x = minitorch.avgpool2d(x, (4, 4))
+        x = x.view(B, 392)
+        x = self.linear1(x).relu()
+        if x.requires_grad():
+            ignore = False
+        else:
+            ignore = True
+        x = minitorch.dropout(x, 0.25, ignore)
+        x = self.linear2(x)
+        return minitorch.logsoftmax(x, dim=-1)
+        
 
 
-def make_mnist(start, stop):
-    ys = []
-    X = []
-    for i in range(start, stop):
-        y = labels[i]
-        vals = [0.0] * 10
-        vals[y] = 1.0
-        ys.append(vals)
-        X.append([[images[i][h * W + w] for w in range(W)] for h in range(H)])
-    return X, ys
+def make_mnist_helper(dataset, idx):
+    y = dataset['label'][idx]
+    vals = [0.0] * 10
+    vals[y] = 1.0
+    image = np.array(dataset['image'][idx], dtype=np.float64)
+    image = ((image / 255) - 0.5) / 0.5
+    print(f"finish idx: {idx}")
+    return image, vals
+
+def make_mnist(start, stop, split):
+    folder = os.path.join(os.path.dirname(__file__), "data")
+    X_path = os.path.join(folder, f"{split}_X.npy")
+    y_path = os.path.join(folder, f"{split}_y.npy")
+    if os.path.exists(X_path) and os.path.exists(y_path):
+        with open(X_path, "rb") as f:
+            X = np.load(f)
+        with open(y_path, "rb") as f:
+            ys = np.load(f)
+    else:
+        dataset = mnist[split]
+        with mp.Pool(8) as p:
+            X_y = p.starmap(make_mnist_helper, zip([dataset] * (stop - start), range(start, stop)))
+        X, ys = zip(*X_y)
+        # ys = []
+        # X = []
+        # dataset = mnist[split]
+        # for i in range(start, stop):
+        #     y = dataset['label'][i]
+        #     vals = [0.0] * 10
+        #     vals[y] = 1.0
+        #     ys.append(vals)
+        #     image = np.array(dataset['image'][i], dtype=np.float64)
+        #     image = ((image / 255) - 0.5) / 0.5
+        #     X.append(image)
+        #     print(f"pic {i} in storage")
+        with open(X_path, "wb") as f:
+            np.save(f, np.stack(X, axis=0))
+        with open(y_path, "wb") as f:
+            np.save(f, np.array(ys))
+    return X.tolist(), ys.tolist()
 
 
 def default_log_fn(epoch, total_loss, correct, total, losses, model):
@@ -107,6 +168,7 @@ class ImageTrain:
         model = self.model
         n_training_samples = len(X_train)
         optim = minitorch.SGD(self.model.parameters(), learning_rate)
+        print({k: v.value.unique_id for k, v in self.model.named_parameters()})
         losses = []
         for epoch in range(1, max_epochs + 1):
             total_loss = 0.0
@@ -171,5 +233,6 @@ class ImageTrain:
 
 
 if __name__ == "__main__":
-    data_train, data_val = (make_mnist(0, 5000), make_mnist(10000, 10500))
-    ImageTrain().train(data_train, data_val, learning_rate=0.01)
+    data_train, data_val = (make_mnist(0, 5000, 'train'), make_mnist(0, 500, 'test'))
+    print("Dataset preparation done.")
+    ImageTrain().train(data_train, data_val, learning_rate=0.001)

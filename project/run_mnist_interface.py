@@ -17,7 +17,7 @@ def render_run_image_interface():
         step=10,
         value=1000,
     )
-    (X_train, y_train) = make_mnist(0, n_training_samples)
+    (X_train, y_train) = make_mnist(0, n_training_samples, "train")
 
     show = st.number_input("Image", min_value=0, max_value=100, step=1, value=1)
     st.write(
@@ -80,7 +80,7 @@ def render_run_image_interface():
 
         train.train(
             (X_train, y_train),
-            make_mnist(10000, 10500),
+            make_mnist(10000, 10500, "test"),
             learning_rate,
             max_epochs,
             log_fn,
